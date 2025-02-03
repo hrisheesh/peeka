@@ -44,7 +44,7 @@ peeka/
 1. **Setup Environment**
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/peeka.git
+git clone https://github.com/hrisheesh/peeka
 cd peeka
 
 # Create and activate virtual environment
