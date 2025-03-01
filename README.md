@@ -72,6 +72,8 @@ Peeka is currently in active development with the following milestones:
 
 - [x] Core facial feature detection implementation
 - [x] Basic training interface
+- [x] Facial feature model training pipeline
+- [x] Training visualization and results panel
 - [ ] Avatar generation model integration
 - [ ] Real-time lip sync implementation
 - [ ] Virtual camera integration

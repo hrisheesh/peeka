@@ -9,7 +9,8 @@ import time
 import wave
 import pyaudio
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QProgressBar, QPushButton, QGroupBox, QMessageBox, QScrollArea)
+    QLabel, QProgressBar, QPushButton, QGroupBox, QMessageBox, QScrollArea,
+    QFileDialog)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 import cv2
@@ -120,10 +121,43 @@ class TrainingWindow(QMainWindow):
         preview_layout.addWidget(self.video_label)
         content_layout.addWidget(preview_group, stretch=2)  # Give more space to preview
 
-        # Right side: Controls and progress
+        # Right side: Controls, progress, and metrics
         controls_container = QWidget()
         controls_container_layout = QVBoxLayout(controls_container)
         controls_container_layout.setSpacing(10)
+
+        # Add metrics display
+        metrics_group = QGroupBox('Facial Metrics')
+        metrics_layout = QVBoxLayout(metrics_group)
+        self.metrics_labels = {
+            'left_eye': QLabel('Left Eye Ratio: 0.00'),
+            'right_eye': QLabel('Right Eye Ratio: 0.00'),
+            'mouth': QLabel('Mouth Ratio: 0.00'),
+            'left_brow': QLabel('Left Brow Height: 0.00'),
+            'right_brow': QLabel('Right Brow Height: 0.00')
+        }
+        for label in self.metrics_labels.values():
+            metrics_layout.addWidget(label)
+        controls_container_layout.addWidget(metrics_group)
+
+        # Add quality indicators
+        quality_group = QGroupBox('Frame Quality')
+        quality_layout = QVBoxLayout(quality_group)
+        self.quality_indicators = {
+            'brightness': QProgressBar(),
+            'contrast': QProgressBar(),
+            'sharpness': QProgressBar(),
+            'stability': QProgressBar()
+        }
+        for name, bar in self.quality_indicators.items():
+            label = QLabel(f'{name.title()}: ')
+            bar.setMinimum(0)
+            bar.setMaximum(100)
+            bar_layout = QHBoxLayout()
+            bar_layout.addWidget(label)
+            bar_layout.addWidget(bar)
+            quality_layout.addLayout(bar_layout)
+        controls_container_layout.addWidget(quality_group)
 
         # Progress group
         progress_group = QGroupBox('Capture Progress')
@@ -170,6 +204,10 @@ class TrainingWindow(QMainWindow):
         self.stop_button.clicked.connect(self.stop_capture)
         self.stop_button.setEnabled(False)
         button_layout.addWidget(self.stop_button)
+        
+        self.load_dataset_button = QPushButton('Load Existing Dataset')
+        self.load_dataset_button.clicked.connect(self.load_existing_dataset)
+        button_layout.addWidget(self.load_dataset_button)
 
         controls_layout.addLayout(button_layout)
         controls_container_layout.addWidget(controls_group)
@@ -251,7 +289,7 @@ class TrainingWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"An error occurred: {str(e)}")
 
     def _finalize_capture(self):
-        """Finalize capture with improved feedback."""
+        """Finalize capture with improved feedback and show training panel."""
         try:
             session_dir = self.training_capture.stop_recording()
             self.timer.stop()
@@ -272,8 +310,12 @@ class TrainingWindow(QMainWindow):
                 return
 
             if self.training_capture.validate_recording(session_dir):
-                QMessageBox.information(self, "Success", 
-                    f'Training completed successfully!\nCaptured {frame_count} frames.')
+                result = QMessageBox.information(self, "Success", 
+                    f'Training data capture completed successfully!\nCaptured {frame_count} frames.\n\nWould you like to proceed to model training?',
+                    QMessageBox.Yes | QMessageBox.No)
+                
+                if result == QMessageBox.Yes:
+                    self.show_training_results_panel(session_dir)
             else:
                 QMessageBox.warning(self, "Validation Failed",
                     'Training data did not meet quality requirements.\n'
@@ -284,6 +326,65 @@ class TrainingWindow(QMainWindow):
                     '- Camera is stable')
         except Exception as e:
             QMessageBox.critical(self, "Error", f"An error occurred: {str(e)}")
+            
+    def load_existing_dataset(self):
+        """Load an existing dataset for training without capturing new video."""
+        try:
+            # Get the base training data directory
+            base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'training_data')
+            
+            # Show directory selection dialog
+            session_dir = QFileDialog.getExistingDirectory(
+                self, "Select Training Session Directory", base_dir,
+                QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+            )
+            
+            if not session_dir:
+                return  # User canceled
+            
+            # Validate that this is a proper training session directory
+            landmarks_dir = os.path.join(session_dir, 'landmarks_data')
+            if not os.path.exists(landmarks_dir):
+                QMessageBox.warning(self, "Invalid Directory", 
+                    "The selected directory does not contain landmark data.\n"
+                    "Please select a valid training session directory.")
+                return
+            
+            # Check if there are enough landmark files
+            landmark_files = [f for f in os.listdir(landmarks_dir) if f.endswith('.json')]
+            if len(landmark_files) < 60:  # Minimum requirement
+                QMessageBox.warning(self, "Insufficient Data", 
+                    f"The selected directory contains only {len(landmark_files)} landmark files.\n"
+                    "At least 60 files are required for training.")
+                return
+            
+            # Proceed to training results panel with the selected directory
+            self.show_training_results_panel(session_dir)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load dataset: {str(e)}")
+    
+    def show_training_results_panel(self, session_dir):
+        """Show the training results panel with the captured data.
+        
+        Args:
+            session_dir: Directory containing the captured training data
+        """
+        try:
+            from src.ui.training_results_panel import TrainingResultsPanel
+            
+            # Create training results panel
+            self.training_results_panel = TrainingResultsPanel(session_dir=session_dir)
+            
+            # Create a new window to display the panel
+            self.training_results_window = QMainWindow()
+            self.training_results_window.setWindowTitle("Training Results and Model Training")
+            self.training_results_window.setCentralWidget(self.training_results_panel)
+            self.training_results_window.setGeometry(100, 100, 1024, 768)
+            self.training_results_window.show()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open training results panel: {str(e)}")
 
     def update_capture(self):
         """Update the video preview and progress."""
@@ -295,69 +396,104 @@ class TrainingWindow(QMainWindow):
 
             success, frame = self.training_capture.video_capture.read_frame()
             if success:
-                # Convert to RGB for MediaPipe processing
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                
-                # Check lighting conditions
-                gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                avg_brightness = cv2.mean(gray_frame)[0]
-                if avg_brightness < 40:  # Too dark
-                    self.status_label.setText('Warning: Poor lighting conditions. Please increase lighting.')
-                elif avg_brightness > 220:  # Too bright
-                    self.status_label.setText('Warning: Too bright. Please reduce lighting.')
-                
-                # Process frame with MediaPipe
-                results = self.face_mesh.process(rgb_frame)
-                
-                # Create a copy for visualization
-                display_frame = frame.copy()
-                
-                if results.multi_face_landmarks:
-                    # Draw the face mesh on the frame
-                    for face_landmarks in results.multi_face_landmarks:
-                        # Draw the face mesh connections
-                        self.mp_drawing.draw_landmarks(
-                            image=display_frame,
-                            landmark_list=face_landmarks,
-                            connections=self.mp_face_mesh.FACEMESH_TESSELATION,
-                            landmark_drawing_spec=self.drawing_spec,
-                            connection_drawing_spec=self.drawing_spec
-                        )
-                        
-                        # Add labels for key facial features
-                        feature_labels = {
-                            'Right Eye': 33,    # Right eye outer corner
-                            'Left Eye': 263,    # Left eye outer corner
-                            'Nose Tip': 1,      # Nose tip
-                            'Mouth': 61,        # Mouth right corner
-                            'Jaw': 152          # Chin
-                        }
-                        
-                        # Draw labels at landmark positions
-                        img_h, img_w, _ = display_frame.shape
-                        for label, idx in feature_labels.items():
-                            landmark = face_landmarks.landmark[idx]
-                            pos = (int(landmark.x * img_w), int(landmark.y * img_h))
-                            cv2.putText(display_frame, label, (pos[0], pos[1]-10),
-                                       cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
+                try:
+                    # Convert to RGB for MediaPipe processing
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    
+                    # Check lighting conditions
+                    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    avg_brightness = cv2.mean(gray_frame)[0]
+                    if avg_brightness < 40:  # Too dark
+                        self.status_label.setText('Warning: Poor lighting conditions. Please increase lighting.')
+                    elif avg_brightness > 220:  # Too bright
+                        self.status_label.setText('Warning: Too bright. Please reduce lighting.')
+                    
+                    # Process frame with MediaPipe
+                    results = self.face_mesh.process(rgb_frame)
+                    
+                    # Create a copy for visualization
+                    display_frame = frame.copy()
+                    
+                    if results.multi_face_landmarks:
+                        # Draw the face mesh on the frame
+                        for face_landmarks in results.multi_face_landmarks:
+                            # Draw the face mesh connections
+                            self.mp_drawing.draw_landmarks(
+                                image=display_frame,
+                                landmark_list=face_landmarks,
+                                connections=self.mp_face_mesh.FACEMESH_TESSELATION,
+                                landmark_drawing_spec=self.drawing_spec,
+                                connection_drawing_spec=self.drawing_spec
+                            )
+                            
+                            # Add labels for key facial features
+                            feature_labels = {
+                                'Right Eye': 33,    # Right eye outer corner
+                                'Left Eye': 263,    # Left eye outer corner
+                                'Nose Tip': 1,      # Nose tip
+                                'Mouth': 61,        # Mouth right corner
+                                'Jaw': 152          # Chin
+                            }
+                            
+                            # Draw labels at landmark positions
+                            img_h, img_w, _ = display_frame.shape
+                            for label, idx in feature_labels.items():
+                                landmark = face_landmarks.landmark[idx]
+                                pos = (int(landmark.x * img_w), int(landmark.y * img_h))
+                                cv2.putText(display_frame, label, (pos[0], pos[1]-10),
+                                           cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
 
-                # Convert frame to Qt format and display
-                rgb_display = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb_display.shape
-                qt_image = QImage(rgb_display.data, w, h, w * ch, QImage.Format_RGB888)
-                scaled_pixmap = QPixmap.fromImage(qt_image).scaled(
-                    self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                self.video_label.setPixmap(scaled_pixmap)
+                    # Convert frame to Qt format and display
+                    rgb_display = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
+                    h, w, ch = rgb_display.shape
+                    qt_image = QImage(rgb_display.data, w, h, w * ch, QImage.Format_RGB888)
+                    scaled_pixmap = QPixmap.fromImage(qt_image).scaled(
+                        self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    self.video_label.setPixmap(scaled_pixmap)
 
-                # Update progress and save frame if recording
-                if self.training_capture.recording:
-                    progress = min(100, (self.training_capture.frame_count / (self.training_capture.target_duration * 10)) * 100)
-                    self.progress_bar.setValue(int(progress))
-                    self.training_capture.update_capture(frame)
+                    # Update progress, metrics, and save frame if recording
+                    if self.training_capture.recording:
+                        progress = min(100, (self.training_capture.frame_count / (self.training_capture.target_duration * 10)) * 100)
+                        self.progress_bar.setValue(int(progress))
 
-                # Force cleanup of Qt image objects
-                qt_image = None
-                scaled_pixmap = None
+                        # Update facial metrics display
+                        if results.multi_face_landmarks:
+                            landmarks = self.training_capture.detect_facial_landmarks(frame)
+                            if landmarks and 'face_metrics' in landmarks:
+                                metrics = landmarks['face_metrics']
+                                self.metrics_labels['left_eye'].setText(f'Left Eye Ratio: {metrics["left_eye_ratio"]:.2f}')
+                                self.metrics_labels['right_eye'].setText(f'Right Eye Ratio: {metrics["right_eye_ratio"]:.2f}')
+                                self.metrics_labels['mouth'].setText(f'Mouth Ratio: {metrics["mouth_aspect_ratio"]:.2f}')
+                                self.metrics_labels['left_brow'].setText(f'Left Brow Height: {metrics["left_brow_height"]:.2f}')
+                                self.metrics_labels['right_brow'].setText(f'Right Brow Height: {metrics["right_brow_height"]:.2f}')
+
+                            # Update quality indicators
+                            quality = self.training_capture._assess_frame_quality(frame)
+                            self.quality_indicators['brightness'].setValue(int(min(quality['brightness'] / 2.55, 100)))
+                            self.quality_indicators['contrast'].setValue(int(min(quality['contrast'] / 2, 100)))
+                            self.quality_indicators['sharpness'].setValue(int(min(quality['sharpness'] / 10, 100)))
+                            
+                            # Calculate stability based on landmark movement
+                            if hasattr(self, 'prev_landmarks'):
+                                movement = np.mean(np.linalg.norm(
+                                    np.array(landmarks['landmarks_2d']) - self.prev_landmarks, axis=1))
+                                stability = max(0, min(100, 100 - movement))
+                                self.quality_indicators['stability'].setValue(int(stability))
+                            self.prev_landmarks = np.array(landmarks['landmarks_2d'])
+
+                        self.training_capture.update_capture(frame)
+
+                    # Force cleanup of Qt image objects and other resources
+                    qt_image = None
+                    scaled_pixmap = None
+                    rgb_display = None
+                    display_frame = None
+                    rgb_frame = None
+                    gray_frame = None
+                    results = None
+                finally:
+                    # Ensure resources are released even if an exception occurs
+                    frame = None
         except Exception as e:
             self.timer.stop()
             self.countdown_timer.stop()
@@ -367,6 +503,18 @@ class TrainingWindow(QMainWindow):
     def closeEvent(self, event):
         """Handle window close event."""
         self.timer.stop()
+        self.countdown_timer.stop()
         if hasattr(self, 'training_capture'):
+            # Stop recording if in progress
+            if self.training_capture.recording:
+                self.training_capture.stop_recording()
+            # Release video capture resources
             self.training_capture.video_capture.release()
+            # Release audio capture resources
+            self.training_capture.audio_capture.release()
+        
+        # Release face mesh resources
+        if hasattr(self, 'face_mesh'):
+            self.face_mesh.close()
+        
         super().closeEvent(event)

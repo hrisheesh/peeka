@@ -21,6 +21,12 @@ class VideoCapture:
         self.last_frame_time = time.time()
         self.fps = 30.0
         self.frame_time = time.time()
+        # Initialize face detector
+        try:
+            self.face_detector = MTCNN()
+        except Exception as e:
+            print(f"Warning: Could not initialize face detector: {str(e)}")
+            self.face_detector = None
 
     def list_devices(self) -> list:
         """List available camera devices.
@@ -61,23 +67,28 @@ class VideoCapture:
         self.set_resolution(self.current_resolution[0], self.current_resolution[1])
         return True
 
-    def read_frame(self) -> tuple:
-        """Read a frame from the video capture.
+    def read_frame(self) -> Tuple[bool, Optional[np.ndarray]]:
+        """Read a frame from the video capture device.
 
         Returns:
-            tuple: (success, frame) pair
+            Tuple containing:
+                - bool: True if frame was successfully captured
+                - np.ndarray or None: The captured frame if successful, None otherwise
         """
-        if self.cap is None:
+        if not self.cap or not self.cap.isOpened():
             return False, None
 
-        success, frame = self.cap.read()
-        if success:
-            current_time = time.time()
-            time_diff = current_time - self.frame_time
-            self.frame_time = current_time
-            self.fps = 1.0 / time_diff if time_diff > 0 else 0.0
+        ret, frame = self.cap.read()
+        if not ret:
+            return False, None
 
-        return success, frame
+        # Calculate FPS
+        current_time = time.time()
+        time_diff = current_time - self.frame_time
+        self.frame_time = current_time
+        self.fps = 1.0 / time_diff if time_diff > 0 else 0.0
+
+        return True, frame
 
     def set_resolution(self, width: int, height: int) -> bool:
         """Set the capture resolution.
@@ -115,73 +126,6 @@ class VideoCapture:
         if self.cap is not None:
             self.cap.release()
             self.cap = None
-
-    def set_resolution(self, width: int, height: int) -> bool:
-        """Set the capture resolution.
-
-        Args:
-            width: Desired frame width
-            height: Desired frame height
-
-        Returns:
-            bool: True if resolution was set successfully
-        """
-        if not self.cap:
-            return False
-
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        
-        # Verify if resolution was set correctly
-        actual_width = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-        actual_height = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-        self.current_resolution = (int(actual_width), int(actual_height))
-        
-        return abs(width - actual_width) < 10 and abs(height - actual_height) < 10
-
-    def get_fps(self) -> float:
-        """Get the current FPS.
-
-        Returns:
-            float: Current frames per second
-        """
-        return self.fps
-
-    def start(self) -> bool:
-        """Start video capture from the specified device.
-
-        Returns:
-            bool: True if capture started successfully, False otherwise
-        """
-        self.cap = cv2.VideoCapture(self.device_id)
-        if self.cap.isOpened():
-            # Set initial resolution
-            self.set_resolution(*self.current_resolution)
-            return True
-        return False
-
-    def read_frame(self) -> Tuple[bool, Optional[np.ndarray]]:
-        """Read a frame from the video capture device.
-
-        Returns:
-            Tuple containing:
-                - bool: True if frame was successfully captured
-                - np.ndarray or None: The captured frame if successful, None otherwise
-        """
-        if not self.cap or not self.cap.isOpened():
-            return False, None
-
-        ret, frame = self.cap.read()
-        if not ret:
-            return False, None
-
-        # Calculate FPS
-        current_time = time.time()
-        time_diff = current_time - self.frame_time
-        self.frame_time = current_time
-        self.fps = 1.0 / time_diff if time_diff > 0 else 0.0
-
-        return True, frame
 
     def detect_face(self, frame: np.ndarray) -> Optional[dict]:
         """Detect face in the given frame using MTCNN.

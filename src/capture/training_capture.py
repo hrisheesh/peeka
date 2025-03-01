@@ -48,7 +48,7 @@ class TrainingDataCapture:
                 max_num_faces=1,
                 min_detection_confidence=0.5,  # Increased threshold for more reliable detection
                 min_tracking_confidence=0.5,  # Increased threshold for more stable tracking
-                refine_landmarks=True  # Enable landmark refinement for better accuracy
+                refine_landmarks=False  # Match TrainingWindow configuration for consistency
             )
             # Test the face mesh initialization with a proper test frame
             test_frame = np.ones((480, 640, 3), dtype=np.uint8) * 128  # Gray test frame
@@ -331,7 +331,7 @@ class TrainingDataCapture:
             validation_ratio = valid_sequences / total_sequences
             print(f"Final validation ratio: {validation_ratio:.2f}")
             
-            return validation_ratio >= 0.3  # At least 30% of sequences must be valid
+            return validation_ratio >= 0.5  # At least 50% of sequences must be valid
 
         except Exception as e:
             print(f"Validation error: {e}")
@@ -380,12 +380,12 @@ class TrainingDataCapture:
 
         # Calculate sequence metrics
         sequence_valid = False
-        if valid_frames >= len(frame_paths) * 0.3:  # Reduced threshold to 30%
+        if valid_frames >= len(frame_paths) * 0.5:  # Increased threshold to 50%
             avg_quality = np.mean(quality_scores) if quality_scores else 0
             
             if landmarks_data:
                 stability = self._check_landmark_stability(landmarks_data)
-                sequence_valid = avg_quality >= 0.4 and stability >= 0.5  # More lenient thresholds
+                sequence_valid = avg_quality >= 0.5 and stability >= 0.6  # Stricter thresholds
 
         return {
             'valid': sequence_valid,
