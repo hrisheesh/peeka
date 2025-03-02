@@ -20,6 +20,7 @@ env/
 training_data/
 *.dat
 *.log
+remove_large_files.sh
 
 # OS
 .DS_Store
