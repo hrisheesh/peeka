@@ -1,108 +1,210 @@
 """Audio capture module for real-time audio input processing.
 
 This module provides functionality for capturing and preprocessing audio input
-from system microphones, with support for noise reduction and normalization.
+from system microphones, with support for feature extraction needed for lip sync.
 """
 
-import numpy as np
 import pyaudio
-from typing import Optional, Tuple, Dict
+import numpy as np
+import wave
+import threading
+import time
 import librosa
+import queue
+from typing import Optional, Tuple, List, Dict, Any
 
 class AudioCapture:
-    """Handles audio capture and preprocessing from system microphones."""
+    """Audio capture class for handling microphone input."""
 
-    def __init__(self, sample_rate: int = 16000, chunk_size: int = 1024,
-                 channels: int = 1, format_type: int = pyaudio.paFloat32):
-        """Initialize the audio capture system.
-
-        Args:
-            sample_rate: Audio sampling rate in Hz (default: 16000)
-            chunk_size: Number of frames per buffer (default: 1024)
-            channels: Number of audio channels (default: 1 for mono)
-            format_type: PyAudio format type (default: 32-bit float)
-        """
-        self.sample_rate = sample_rate
-        self.chunk_size = chunk_size
-        self.channels = channels
-        self.format_type = format_type
-        self.audio = pyaudio.PyAudio()
+    def __init__(self):
+        """Initialize audio capture with default settings."""
+        self.device_id = None  # Default device
         self.stream = None
+        self.audio = None
+        self.is_recording = False
+        self.frames = []
+        self.lock = threading.Lock()
+        self.sample_rate = 16000  # 16kHz is good for speech processing
+        self.channels = 1  # Mono for speech processing
+        self.format = pyaudio.paInt16
+        self.chunk_size = 1024
+        self.audio_buffer = queue.Queue(maxsize=100)  # Buffer for real-time processing
+        self.feature_buffer = queue.Queue(maxsize=100)  # Buffer for extracted features
+        self.feature_thread = None
+        self.feature_processing = False
 
-    def start(self, device_index: Optional[int] = None) -> bool:
-        """Start audio capture from the specified device.
+    def list_devices(self) -> list:
+        """List available audio input devices.
 
-        Args:
-            device_index: Optional device index (default: None for default device)
+        Returns:
+            list: List of dictionaries containing device info
+        """
+        available_devices = []
+        try:
+            self.audio = pyaudio.PyAudio()
+            info = self.audio.get_host_api_info_by_index(0)
+            num_devices = info.get('deviceCount')
+            
+            for i in range(num_devices):
+                device_info = self.audio.get_device_info_by_host_api_device_index(0, i)
+                if device_info.get('maxInputChannels') > 0:
+                    available_devices.append({
+                        'id': i,
+                        'name': device_info.get('name'),
+                        'channels': device_info.get('maxInputChannels'),
+                        'sample_rate': int(device_info.get('defaultSampleRate'))
+                    })
+        except Exception as e:
+            print(f"Error listing audio devices: {e}")
+        
+        return available_devices if available_devices else [{'id': None, 'name': 'Default Microphone'}]
+
+    def start(self) -> bool:
+        """Start audio capture.
 
         Returns:
             bool: True if capture started successfully, False otherwise
         """
         try:
+            if self.audio is None:
+                self.audio = pyaudio.PyAudio()
+            
             self.stream = self.audio.open(
-                format=self.format_type,
+                format=self.format,
                 channels=self.channels,
                 rate=self.sample_rate,
                 input=True,
-                input_device_index=device_index,
-                frames_per_buffer=self.chunk_size
+                input_device_index=self.device_id,
+                frames_per_buffer=self.chunk_size,
+                stream_callback=self._audio_callback
             )
+            
+            self.is_recording = True
+            self.frames = []
+            
+            # Start feature extraction thread
+            self.feature_processing = True
+            self.feature_thread = threading.Thread(target=self._process_audio_features)
+            self.feature_thread.daemon = True
+            self.feature_thread.start()
+            
             return True
         except Exception as e:
             print(f"Error starting audio capture: {e}")
             return False
 
-    def read_frame(self) -> Optional[bytes]:
-        """Read a frame of audio data from the stream.
-
-        Returns:
-            bytes or None: The captured audio data if successful, None otherwise
-        """
-        if not self.stream:
-            return None
-
-        try:
-            return self.stream.read(self.chunk_size, exception_on_overflow=False)
-        except Exception as e:
-            print(f"Error reading audio frame: {e}")
-            return None
-
-    def preprocess_audio(self, audio_chunk: np.ndarray,
-                        normalize: bool = True) -> np.ndarray:
-        """Apply preprocessing to the audio chunk.
+    def _audio_callback(self, in_data, frame_count, time_info, status) -> Tuple[bytes, int]:
+        """Callback function for audio stream.
 
         Args:
-            audio_chunk: Input audio data
-            normalize: Whether to normalize the audio (default: True)
+            in_data: Input audio data
+            frame_count: Number of frames
+            time_info: Time information
+            status: Status flag
 
         Returns:
-            np.ndarray: Preprocessed audio data
+            Tuple containing the data and pyaudio flag
         """
-        if normalize:
-            audio_chunk = librosa.util.normalize(audio_chunk)
-        return audio_chunk
+        try:
+            # Add the audio data to our buffer for processing
+            if not self.audio_buffer.full():
+                self.audio_buffer.put(in_data)
+            
+            # Also store frames for recording if needed
+            with self.lock:
+                if self.is_recording:
+                    self.frames.append(in_data)
+        except Exception as e:
+            print(f"Error in audio callback: {e}")
+        
+        return (in_data, pyaudio.paContinue)
 
-    def get_audio_devices(self) -> Dict[int, str]:
-        """Get a list of available audio input devices.
+    def _process_audio_features(self) -> None:
+        """Process audio data to extract features for lip sync."""
+        while self.feature_processing:
+            try:
+                if not self.audio_buffer.empty():
+                    # Get audio data from buffer
+                    audio_data = self.audio_buffer.get()
+                    
+                    # Convert to numpy array
+                    audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+                    
+                    # Extract features (MFCC for phoneme detection)
+                    if len(audio_np) > 0:
+                        mfcc = librosa.feature.mfcc(
+                            y=audio_np, 
+                            sr=self.sample_rate, 
+                            n_mfcc=13,  # Standard for speech recognition
+                            hop_length=int(self.sample_rate * 0.01)  # 10ms hop
+                        )
+                        
+                        # Add to feature buffer if not full
+                        if not self.feature_buffer.full():
+                            self.feature_buffer.put({
+                                'mfcc': mfcc,
+                                'timestamp': time.time()
+                            })
+                else:
+                    # Sleep a bit to prevent CPU hogging
+                    time.sleep(0.01)
+            except Exception as e:
+                print(f"Error processing audio features: {e}")
+                time.sleep(0.1)  # Sleep on error to prevent rapid error loops
+
+    def get_latest_features(self) -> Optional[Dict[str, Any]]:
+        """Get the latest extracted audio features.
 
         Returns:
-            Dict[int, str]: Dictionary mapping device indices to their names
+            Dict containing audio features or None if no features available
         """
-        devices = {}
-        for i in range(self.audio.get_device_count()):
-            device_info = self.audio.get_device_info_by_index(i)
-            if device_info['maxInputChannels'] > 0:
-                devices[i] = device_info['name']
-        return devices
+        if self.feature_buffer.empty():
+            return None
+        
+        # Get all available features and return only the most recent one
+        latest_feature = None
+        while not self.feature_buffer.empty():
+            latest_feature = self.feature_buffer.get()
+        
+        return latest_feature
 
-    def stop(self) -> None:
-        """Stop the audio capture stream."""
-        if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
+    def save_recording(self, filename: str) -> bool:
+        """Save the recorded audio to a WAV file.
+
+        Args:
+            filename: Path to save the WAV file
+
+        Returns:
+            bool: True if saved successfully, False otherwise
+        """
+        if not self.frames:
+            return False
+        
+        try:
+            with wave.open(filename, 'wb') as wf:
+                wf.setnchannels(self.channels)
+                wf.setsampwidth(self.audio.get_sample_size(self.format))
+                wf.setframerate(self.sample_rate)
+                with self.lock:
+                    wf.writeframes(b''.join(self.frames))
+            return True
+        except Exception as e:
+            print(f"Error saving audio recording: {e}")
+            return False
 
     def release(self) -> None:
-        """Release the audio capture resources."""
-        self.stop()
-        if self.audio:
+        """Release audio resources."""
+        self.is_recording = False
+        self.feature_processing = False
+        
+        if self.feature_thread is not None:
+            self.feature_thread.join(timeout=1.0)
+        
+        if self.stream is not None:
+            self.stream.stop_stream()
+            self.stream.close()
+            self.stream = None
+        
+        if self.audio is not None:
             self.audio.terminate()
+            self.audio = None

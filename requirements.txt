@@ -1,33 +1,29 @@
 # Core dependencies
 numpy>=1.19.0
-pandas>=1.2.0
+opencv-python>=4.5.0
+PyQt5>=5.15.0
+pyaudio>=0.2.11
+mediapipe>=0.8.9
+mtcnn>=0.1.0
+dlib>=19.22.0
+pyvirtualcam>=0.5.0
+
+# Deep learning frameworks
 torch>=1.9.0
 torchvision>=0.10.0
-tensorflow>=2.6.0
+tensorflow>=2.5.0
 
-# Video and audio processing
-opencv-python>=4.5.0
-dlib>=19.22.0
-mtcnn>=0.1.0
-pyaudio>=0.2.11
+# Audio processing
 librosa>=0.8.1
+sounddevice>=0.4.1
 
-# Deep learning models
-wav2lip>=0.1.0
-first-order-model>=0.1.0
+# Lip sync specific
+Wav2Lip @ git+https://github.com/Rudrabha/Wav2Lip.git
 
-# Virtual camera
-pyvirtualcam>=0.8.0
+# Visualization
+matplotlib>=3.4.2
 
-# UI and visualization
-PyQt5>=5.15.0
-matplotlib>=3.4.0
-
-# Testing and development
-pytest>=6.2.0
-black>=21.5b2
-flake8>=3.9.0
-
-# Documentation
-Sphinx>=4.0.0
-sphinx-rtd-theme>=0.5.0
+# Utilities
+tqdm>=4.61.1
+pandas>=1.3.0
+scipy>=1.7.0
