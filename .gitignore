@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+
+# Virtual Environment
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Project specific
+training_data/
+*.dat
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+
+# Audio/Video test files
+*.mp4
+*.wav
+*.avi
+
+# Large model files
+models/
+# Uncomment below if you want to track specific files in models directory
+# !models/.gitkeep
